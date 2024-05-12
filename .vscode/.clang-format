@@ -1,0 +1,11 @@
+{
+  BasedOnStyle: LLVM,
+  UseTab: Never,
+  IndentWidth: 2,
+  TabWidth: 2,
+  IndentCaseLabels: false,
+  ColumnLimit: 121,
+  PointerAlignment: Left,
+  RemoveSemicolon: true,
+  AlignAfterOpenBracket: AlwaysBreak
+}
