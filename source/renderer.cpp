@@ -7,8 +7,16 @@
 #include <string>
 #include <vector>
 
-VkInstance instance;
-VkDebugUtilsMessengerEXT messenger;
+#define VULKAN_VALIDATION_LAYER_NAME "VK_LAYER_KHRONOS_validation"
+#define VK_INST_FUNC(inst, name) (PFN_##name) vkGetInstanceProcAddr(inst, #name)
+
+typedef struct {
+  VkInstance instance;
+  VkDebugUtilsMessengerEXT debugMessenger;
+} RenderData;
+
+static RenderData* renderData;
+
 VkPhysicalDevice physicalDevice;
 VkDevice device;
 VkSurfaceKHR surface;
@@ -34,10 +42,14 @@ const static int MAX_FRAMES_IN_FLIGHT = 2;
 
 void createSwapChain();
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
-    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData) {
-  SDL_Log(("validation layer: " + std::string(pCallbackData->pMessage)).c_str());
+static VKAPI_ATTR VkBool32 VKAPI_CALL DebugMessenger(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severityBits, VkDebugUtilsMessageTypeFlagsEXT typeFlags,
+    const VkDebugUtilsMessengerCallbackDataEXT* data, void* userData) {
+  if ((severityBits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0) {
+    SDL_LogError(SDL_LOG_CATEGORY_RENDER, data->pMessage);
+  } else if ((severityBits & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) != 0) {
+    SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, data->pMessage);
+  }
   return VK_FALSE;
 }
 
@@ -196,61 +208,83 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
   vkEndCommandBuffer(commandBuffer);
 }
 
-Renderer::Renderer(SDL_Window* window) { // Instance
-  {
-    Uint32 count_instance_extensions;
-    const char* const* instance_extensions = SDL_Vulkan_GetInstanceExtensions(&count_instance_extensions);
+void CheckRequiredInstLayers(const char* const* requiredLayers, Uint32 layersCount) {
+  Uint32 propertyCount;
+  vkEnumerateInstanceLayerProperties(&propertyCount, NULL);
+  VkLayerProperties* properties = (VkLayerProperties*)SDL_malloc(propertyCount * sizeof(VkLayerProperties));
+  vkEnumerateInstanceLayerProperties(&propertyCount, properties);
 
-    std::vector<const char*> ext;
-    for (int i = 0; i < count_instance_extensions; i++) {
-      ext.emplace_back(instance_extensions[i]);
+  for (int i = 0; i < layersCount; i++) {
+    bool missLayer = true;
+    for (int j = 0; j < propertyCount; j++) {
+      if (SDL_strcmp(requiredLayers[i], properties[j].layerName) == 0) {
+        missLayer = false;
+        break;
+      }
     }
-    ext.emplace_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-
-    std::vector<const char*> layers;
-    layers.emplace_back("VK_LAYER_KHRONOS_validation");
-
-    Uint32 propertyCount;
-    vkEnumerateInstanceLayerProperties(&propertyCount, NULL);
-    VkLayerProperties* properties = (VkLayerProperties*)SDL_malloc(propertyCount * sizeof(VkLayerProperties));
-    vkEnumerateInstanceLayerProperties(&propertyCount, properties);
-
-    VkInstanceCreateInfo create_info = {
-        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .pNext = NULL,
-        .pApplicationInfo = NULL,
-        .enabledLayerCount = layers.size(),
-        .ppEnabledLayerNames = layers.data(),
-        .enabledExtensionCount = ext.size(),
-        .ppEnabledExtensionNames = ext.data(),
-    };
-    vkCreateInstance(&create_info, NULL, &instance);
-  }
-
-  // Debug
-  {
-    VkDebugUtilsMessengerCreateInfoEXT createInfo;
-    createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    createInfo.messageSeverity =
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    createInfo.messageType =
-        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT;
-    createInfo.pfnUserCallback = debugCallback;
-
-    auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-    if (func != NULL) {
-      func(instance, &createInfo, NULL, &messenger);
+    if (missLayer) {
+      SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Missing \"%s\" instance layer", requiredLayers[i]);
     }
   }
+  SDL_free(properties);
+}
+
+void CreateInstance() {
+  Uint32 countSdlInstExt;
+  const char* const* sdlInstExt = SDL_Vulkan_GetInstanceExtensions(&countSdlInstExt);
+  Uint32 countInstExt = countSdlInstExt + 1;
+  const char** instExt = (const char**)SDL_malloc(countInstExt * sizeof(const char*));
+  SDL_memcpy((void*)instExt, sdlInstExt, countSdlInstExt * sizeof(const char*));
+  instExt[countInstExt - 1] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+
+  Uint32 countInstLayers = 1;
+  const char** instLayers = (const char**)SDL_malloc(countInstLayers * sizeof(const char*));
+  instLayers[0] = VULKAN_VALIDATION_LAYER_NAME;
+  CheckRequiredInstLayers(instLayers, countInstLayers);
+
+  VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+      .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+                         VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+      .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                     VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
+                     VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT,
+      .pfnUserCallback = DebugMessenger,
+  };
+
+  VkInstanceCreateInfo instCreateInfo = {
+      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+      .pNext = &debugCreateInfo,
+      .pApplicationInfo = NULL,
+      .enabledLayerCount = countInstLayers,
+      .ppEnabledLayerNames = instLayers,
+      .enabledExtensionCount = countInstExt,
+      .ppEnabledExtensionNames = instExt,
+  };
+
+  vkCreateInstance(&instCreateInfo, NULL, &(renderData->instance));
+
+  SDL_free(instLayers);
+  SDL_free(instExt);
+
+  PFN_vkCreateDebugUtilsMessengerEXT createFunc = VK_INST_FUNC(renderData->instance, vkCreateDebugUtilsMessengerEXT);
+  if (createFunc != NULL) {
+    createFunc(renderData->instance, &debugCreateInfo, NULL, &(renderData->debugMessenger));
+  } else {
+    renderData->debugMessenger = NULL;
+  }
+}
+
+Renderer::Renderer(SDL_Window* window) {
+  renderData = (RenderData*)SDL_malloc(sizeof(RenderData));
+
+  CreateInstance();
 
   // Device
   {
     VkPhysicalDevice* physical_devices = (VkPhysicalDevice*)SDL_malloc(sizeof(VkPhysicalDevice));
     Uint32 get_first = 1;
-    vkEnumeratePhysicalDevices(instance, &get_first, physical_devices);
+    vkEnumeratePhysicalDevices(renderData->instance, &get_first, physical_devices);
     physicalDevice = physical_devices[0];
     SDL_free(physical_devices);
 
@@ -300,7 +334,7 @@ Renderer::Renderer(SDL_Window* window) { // Instance
   }
 
   // surface
-  SDL_Vulkan_CreateSurface(window, instance, NULL, &surface);
+  SDL_Vulkan_CreateSurface(window, renderData->instance, NULL, &surface);
 
   // graphicsQueue
   vkGetDeviceQueue(device, queueFamilyIndex, 0, &graphicsQueue);
@@ -576,11 +610,14 @@ Renderer::~Renderer() {
   vkDestroyPipelineLayout(device, pipelineLayout, NULL);
   vkDestroyRenderPass(device, renderPass, NULL);
 
-  vkDestroySurfaceKHR(instance, surface, NULL);
+  vkDestroySurfaceKHR(renderData->instance, surface, NULL);
   vkDestroyDevice(device, NULL);
-  auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    func(instance, messenger, NULL);
+
+  PFN_vkDestroyDebugUtilsMessengerEXT destroyFunc = VK_INST_FUNC(renderData->instance, vkDestroyDebugUtilsMessengerEXT);
+  if (destroyFunc != NULL && renderData->debugMessenger != NULL) {
+    destroyFunc(renderData->instance, renderData->debugMessenger, NULL);
   }
-  vkDestroyInstance(instance, NULL);
+
+  vkDestroyInstance(renderData->instance, NULL);
+  SDL_free(renderData);
 }

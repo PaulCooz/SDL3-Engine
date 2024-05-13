@@ -26,6 +26,14 @@
 				"configure"
 			],
 			"group": "build"
+		},
+		{
+			"label": "build and run",
+			"command": "./build/Debug/sdlrenderer.exe",
+			"dependsOn": [
+				"build"
+			],
+			"group": "build"
 		}
 	]
 }
