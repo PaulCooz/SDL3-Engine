@@ -14,15 +14,19 @@ typedef struct {
   VkInstance instance;
   VkDebugUtilsMessengerEXT debugMessenger;
 
+  VkSurfaceKHR surface;
+
   VkPhysicalDevice physicalDevice;
+
+  VkFormat surfaceFormat;
+  VkColorSpaceKHR surfaceColorSpace;
+
   VkDevice device;
 
   Uint32 deviceGraphicsQueueIndex;
   Uint32 devicePresentQueueIndex;
   VkQueue graphicsQueue;
   VkQueue presentQueue;
-
-  VkSurfaceKHR surface;
 
   VkCommandPool commandPool;
   VkCommandBuffer* commandBuffers;
@@ -40,7 +44,6 @@ const Uint32 deviceExtCount = 1;
 const char* const deviceExtensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 VkSwapchainKHR swapChain;
-VkFormat swapChainImageFormat;
 VkExtent2D swapChainExtent;
 std::vector<VkImage> swapChainImages;
 std::vector<VkImageView> swapChainImageViews;
@@ -80,10 +83,13 @@ static std::vector<char> ReadFile(const std::string& filename) {
 void CreateInstance();
 bool CheckRequiredInstLayers(const char* const* requiredLayers, Uint32 layersCount);
 
-void CreateDevices();
 void PickPhysicalDeviceAndQueues();
 void GetQueueFamilies(VkPhysicalDevice physicalDevice, Uint32* outGraphicsQueueI, Uint32* outPresentQueueI);
 bool HasRequiredDeviceLayers(VkPhysicalDevice physicalDevice, const char* const* requiredLayers, Uint32 layersCount);
+
+void PickDeviceSurfaceFormat();
+
+void CreateLogicalDevice();
 
 void CreateCommands();
 
@@ -92,6 +98,8 @@ void CreateRenderPass();
 void CreatePipeline();
 
 void CreateSwapChain();
+
+void CreateSemaphoresAndFences();
 
 void RecreateSwapChain();
 void CleanupSwapChain();
@@ -102,31 +110,16 @@ Renderer::Renderer(SDL_Window* window) {
 
   CreateInstance();
   SDL_Vulkan_CreateSurface(window, renderData->instance, NULL, &(renderData->surface));
-  CreateDevices();
+  PickPhysicalDeviceAndQueues();
+  PickDeviceSurfaceFormat();
+  CreateLogicalDevice();
   vkGetDeviceQueue(renderData->device, renderData->deviceGraphicsQueueIndex, 0, &(renderData->graphicsQueue));
   vkGetDeviceQueue(renderData->device, renderData->devicePresentQueueIndex, 0, &(renderData->presentQueue));
   CreateCommands();
   CreateRenderPass();
   CreatePipeline();
   CreateSwapChain();
-  // Sync
-  {
-    imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-
-    VkSemaphoreCreateInfo semaphoreInfo{};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-      vkCreateSemaphore(renderData->device, &semaphoreInfo, NULL, &imageAvailableSemaphores[i]);
-      vkCreateSemaphore(renderData->device, &semaphoreInfo, NULL, &renderFinishedSemaphores[i]);
-      vkCreateFence(renderData->device, &fenceInfo, NULL, &inFlightFences[i]);
-    }
-  }
+  CreateSemaphoresAndFences();
 }
 
 void CreateInstance() {
@@ -193,43 +186,6 @@ bool CheckRequiredInstLayers(const char* const* requiredLayers, Uint32 layersCou
   }
   SDL_free(properties);
   return hasAll;
-}
-
-void CreateDevices() {
-  PickPhysicalDeviceAndQueues();
-
-  Uint32 internalQueueCount = 1;
-  float internalQueuePriorities[] = {1.0};
-  VkDeviceQueueCreateInfo graphicsQueueInfo = {
-      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-      .pNext = NULL,
-      .queueFamilyIndex = renderData->deviceGraphicsQueueIndex,
-      .queueCount = internalQueueCount,
-      .pQueuePriorities = internalQueuePriorities,
-  };
-  VkDeviceQueueCreateInfo presentQueueInfo = {
-      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-      .pNext = NULL,
-      .queueFamilyIndex = renderData->devicePresentQueueIndex,
-      .queueCount = internalQueueCount,
-      .pQueuePriorities = internalQueuePriorities,
-  };
-  Uint32 queueInfoCount = 2;
-  VkDeviceQueueCreateInfo queueInfos[] = {graphicsQueueInfo, presentQueueInfo};
-
-  VkDeviceCreateInfo deviceInfo = {
-      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-      .pNext = NULL,
-      .queueCreateInfoCount = queueInfoCount,
-      .pQueueCreateInfos = queueInfos,
-      .enabledLayerCount = 0,
-      .ppEnabledLayerNames = NULL,
-      .enabledExtensionCount = deviceExtCount,
-      .ppEnabledExtensionNames = deviceExtensions,
-      .pEnabledFeatures = NULL,
-  };
-
-  vkCreateDevice(renderData->physicalDevice, &deviceInfo, NULL, &(renderData->device));
 }
 
 void PickPhysicalDeviceAndQueues() {
@@ -314,6 +270,63 @@ bool HasRequiredDeviceLayers(VkPhysicalDevice physicalDevice, const char* const*
   return hasAll;
 }
 
+void PickDeviceSurfaceFormat() {
+  Uint32 formatCount;
+  VkSurfaceFormatKHR* formats;
+  vkGetPhysicalDeviceSurfaceFormatsKHR(renderData->physicalDevice, renderData->surface, &formatCount, NULL);
+  formats = (VkSurfaceFormatKHR*)SDL_malloc(formatCount * sizeof(VkSurfaceFormatKHR));
+  vkGetPhysicalDeviceSurfaceFormatsKHR(renderData->physicalDevice, renderData->surface, &formatCount, formats);
+
+  VkSurfaceFormatKHR format = formats[0];
+  for (int i = 0; i < formatCount; i++) {
+    const VkSurfaceFormatKHR formatI = formats[i];
+    if (formatI.format == VK_FORMAT_B8G8R8A8_SRGB && formatI.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+      format = formats[i];
+      break;
+    }
+  }
+
+  renderData->surfaceFormat = format.format;
+  renderData->surfaceColorSpace = format.colorSpace;
+
+  SDL_free(formats);
+}
+
+void CreateLogicalDevice() {
+  Uint32 internalQueueCount = 1;
+  float internalQueuePriorities[] = {1.0};
+  VkDeviceQueueCreateInfo graphicsQueueInfo = {
+      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+      .pNext = NULL,
+      .queueFamilyIndex = renderData->deviceGraphicsQueueIndex,
+      .queueCount = internalQueueCount,
+      .pQueuePriorities = internalQueuePriorities,
+  };
+  VkDeviceQueueCreateInfo presentQueueInfo = {
+      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+      .pNext = NULL,
+      .queueFamilyIndex = renderData->devicePresentQueueIndex,
+      .queueCount = internalQueueCount,
+      .pQueuePriorities = internalQueuePriorities,
+  };
+  Uint32 queueInfoCount = 2;
+  VkDeviceQueueCreateInfo queueInfos[] = {graphicsQueueInfo, presentQueueInfo};
+
+  VkDeviceCreateInfo deviceInfo = {
+      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+      .pNext = NULL,
+      .queueCreateInfoCount = queueInfoCount,
+      .pQueueCreateInfos = queueInfos,
+      .enabledLayerCount = 0,
+      .ppEnabledLayerNames = NULL,
+      .enabledExtensionCount = deviceExtCount,
+      .ppEnabledExtensionNames = deviceExtensions,
+      .pEnabledFeatures = NULL,
+  };
+
+  vkCreateDevice(renderData->physicalDevice, &deviceInfo, NULL, &(renderData->device));
+}
+
 void CreateCommands() {
   VkCommandPoolCreateInfo poolInfo = {
       .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -333,14 +346,8 @@ void CreateCommands() {
 }
 
 void CreateRenderPass() {
-  Uint32 formatCount;
-  VkSurfaceFormatKHR* formats;
-  vkGetPhysicalDeviceSurfaceFormatsKHR(renderData->physicalDevice, renderData->surface, &formatCount, NULL);
-  formats = (VkSurfaceFormatKHR*)SDL_malloc(formatCount * sizeof(VkSurfaceFormatKHR));
-  vkGetPhysicalDeviceSurfaceFormatsKHR(renderData->physicalDevice, renderData->surface, &formatCount, formats);
-
   VkAttachmentDescription colorAttachment = {
-      .format = formats[0].format,
+      .format = renderData->surfaceFormat,
       .samples = VK_SAMPLE_COUNT_1_BIT,
       .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -377,8 +384,6 @@ void CreateRenderPass() {
   };
 
   vkCreateRenderPass(renderData->device, &renderPassInfo, NULL, &(renderData->renderPass));
-
-  SDL_free(formats);
 }
 
 void CreatePipeline() {
@@ -496,12 +501,6 @@ void CreateSwapChain() {
   VkSurfaceCapabilitiesKHR capabilities;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(renderData->physicalDevice, renderData->surface, &capabilities);
 
-  Uint32 formatCount;
-  VkSurfaceFormatKHR* formats;
-  vkGetPhysicalDeviceSurfaceFormatsKHR(renderData->physicalDevice, renderData->surface, &formatCount, NULL);
-  formats = (VkSurfaceFormatKHR*)SDL_malloc(formatCount * sizeof(VkSurfaceFormatKHR));
-  vkGetPhysicalDeviceSurfaceFormatsKHR(renderData->physicalDevice, renderData->surface, &formatCount, formats);
-
   Uint32 presentModeCount;
   VkPresentModeKHR* presentModes;
   vkGetPhysicalDeviceSurfacePresentModesKHR(renderData->physicalDevice, renderData->surface, &presentModeCount, NULL);
@@ -513,8 +512,8 @@ void CreateSwapChain() {
       .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
       .surface = renderData->surface,
       .minImageCount = capabilities.minImageCount,
-      .imageFormat = formats[0].format,
-      .imageColorSpace = formats[0].colorSpace,
+      .imageFormat = renderData->surfaceFormat,
+      .imageColorSpace = renderData->surfaceColorSpace,
       .imageExtent = capabilities.currentExtent,
       .imageArrayLayers = 1,
       .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -541,7 +540,6 @@ void CreateSwapChain() {
   swapChainImages.resize(imageCount);
   vkGetSwapchainImagesKHR(renderData->device, swapChain, &imageCount, swapChainImages.data());
 
-  swapChainImageFormat = formats[0].format;
   swapChainExtent = capabilities.currentExtent;
 
   swapChainImageViews.resize(swapChainImages.size());
@@ -550,7 +548,7 @@ void CreateSwapChain() {
     createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     createInfo.image = swapChainImages[i];
     createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    createInfo.format = swapChainImageFormat;
+    createInfo.format = renderData->surfaceFormat;
     createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
     createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
     createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -580,8 +578,26 @@ void CreateSwapChain() {
     vkCreateFramebuffer(renderData->device, &framebufferInfo, NULL, &swapChainFramebuffers[i]);
   }
 
-  SDL_free(formats);
   SDL_free(presentModes);
+}
+
+void CreateSemaphoresAndFences() {
+  imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+
+  VkSemaphoreCreateInfo semaphoreInfo = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+  };
+  VkFenceCreateInfo fenceInfo = {
+      .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+      .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+  };
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    vkCreateSemaphore(renderData->device, &semaphoreInfo, NULL, &imageAvailableSemaphores[i]);
+    vkCreateSemaphore(renderData->device, &semaphoreInfo, NULL, &renderFinishedSemaphores[i]);
+    vkCreateFence(renderData->device, &fenceInfo, NULL, &inFlightFences[i]);
+  }
 }
 
 int Renderer::Present() {
