@@ -23,6 +23,9 @@ typedef struct {
   VkQueue presentQueue;
 
   VkSurfaceKHR surface;
+
+  VkCommandPool commandPool;
+  VkCommandBuffer* commandBuffers;
 } RenderData;
 
 static RenderData* renderData;
@@ -43,14 +46,12 @@ VkPipelineLayout pipelineLayout;
 VkPipeline pipeline;
 VkRenderPass renderPass;
 std::vector<VkFramebuffer> swapChainFramebuffers;
-VkCommandPool commandPool;
-std::vector<VkCommandBuffer> commandBuffers;
 std::vector<VkSemaphore> imageAvailableSemaphores;
 std::vector<VkSemaphore> renderFinishedSemaphores;
 std::vector<VkFence> inFlightFences;
 
-uint32_t currentFrame = 0;
-const static int MAX_FRAMES_IN_FLIGHT = 2;
+Uint32 currentFrame = 0;
+const static Uint32 MAX_FRAMES_IN_FLIGHT = 2;
 
 void createSwapChain();
 
@@ -411,9 +412,23 @@ void CreateDevices() {
   };
 
   vkCreateDevice(renderData->physicalDevice, &deviceInfo, NULL, &(renderData->device));
+}
+void CreateCommands() {
+  VkCommandPoolCreateInfo poolInfo = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+      .queueFamilyIndex = renderData->deviceGraphicsQueueIndex,
+  };
+  vkCreateCommandPool(renderData->device, &poolInfo, NULL, &(renderData->commandPool));
 
-  vkGetDeviceQueue(renderData->device, renderData->deviceGraphicsQueueIndex, 0, &(renderData->graphicsQueue));
-  vkGetDeviceQueue(renderData->device, renderData->devicePresentQueueIndex, 0, &(renderData->presentQueue));
+  renderData->commandBuffers = (VkCommandBuffer*)SDL_malloc(MAX_FRAMES_IN_FLIGHT * sizeof(VkCommandBuffer));
+  VkCommandBufferAllocateInfo allocInfo = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .commandPool = renderData->commandPool,
+      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+      .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
+  };
+  vkAllocateCommandBuffers(renderData->device, &allocInfo, renderData->commandBuffers);
 }
 
 Renderer::Renderer(SDL_Window* window) {
@@ -422,6 +437,11 @@ Renderer::Renderer(SDL_Window* window) {
   CreateInstance();
   SDL_Vulkan_CreateSurface(window, renderData->instance, NULL, &(renderData->surface));
   CreateDevices();
+
+  vkGetDeviceQueue(renderData->device, renderData->deviceGraphicsQueueIndex, 0, &(renderData->graphicsQueue));
+  vkGetDeviceQueue(renderData->device, renderData->devicePresentQueueIndex, 0, &(renderData->presentQueue));
+
+  CreateCommands();
 
   // pipeline
   {
@@ -583,28 +603,6 @@ Renderer::Renderer(SDL_Window* window) {
 
   createSwapChain();
 
-  // CommandPool
-  {
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    poolInfo.queueFamilyIndex = renderData->deviceGraphicsQueueIndex;
-    vkCreateCommandPool(renderData->device, &poolInfo, NULL, &commandPool);
-  }
-
-  // Command Buffer
-  {
-    commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
-
-    vkAllocateCommandBuffers(renderData->device, &allocInfo, commandBuffers.data());
-  }
-
   // Sync
   {
     imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
@@ -639,8 +637,8 @@ int Renderer::Present() {
 
   vkResetFences(renderData->device, 1, &inFlightFences[currentFrame]);
 
-  vkResetCommandBuffer(commandBuffers[currentFrame], 0);
-  recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+  vkResetCommandBuffer(renderData->commandBuffers[currentFrame], 0);
+  recordCommandBuffer(renderData->commandBuffers[currentFrame], imageIndex);
 
   VkSubmitInfo submitInfo{};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -651,7 +649,7 @@ int Renderer::Present() {
   submitInfo.pWaitSemaphores = waitSemaphores;
   submitInfo.pWaitDstStageMask = waitStages;
   submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
+  submitInfo.pCommandBuffers = &(renderData->commandBuffers[currentFrame]);
 
   VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
   submitInfo.signalSemaphoreCount = 1;
@@ -688,7 +686,7 @@ Renderer::~Renderer() {
     vkDestroySemaphore(renderData->device, imageAvailableSemaphores[i], nullptr);
     vkDestroyFence(renderData->device, inFlightFences[i], nullptr);
   }
-  vkDestroyCommandPool(renderData->device, commandPool, NULL);
+  vkDestroyCommandPool(renderData->device, renderData->commandPool, NULL);
 
   vkDestroyPipeline(renderData->device, pipeline, NULL);
   vkDestroyPipelineLayout(renderData->device, pipelineLayout, NULL);
@@ -703,5 +701,7 @@ Renderer::~Renderer() {
   }
 
   vkDestroyInstance(renderData->instance, NULL);
+
+  SDL_free(renderData->commandBuffers);
   SDL_free(renderData);
 }
