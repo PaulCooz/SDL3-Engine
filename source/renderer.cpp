@@ -3,8 +3,6 @@
 #include <SDL3/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
 
-#include <fstream>
-#include <string>
 #include <vector>
 
 #define VULKAN_VALIDATION_LAYER_NAME "VK_LAYER_KHRONOS_validation"
@@ -68,16 +66,21 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL DebugMessenger(
   return VK_FALSE;
 }
 
-static std::vector<char> ReadFile(const std::string& filename) {
-  std::ifstream file(filename, std::ios::ate | std::ios::binary);
+static bool ReadShader(const char* file, Uint32** outBytecode, Uint32* outCount) {
+  SDL_IOStream* stream = SDL_IOFromFile(file, "rb");
+  if (stream == NULL)
+    return false;
+  Sint64 size = SDL_GetIOSize(stream);
+  if (size <= 0)
+    return false;
 
-  size_t fileSize = (size_t)file.tellg();
-  std::vector<char> buffer(fileSize);
-  file.seekg(0);
-  file.read(buffer.data(), fileSize);
-  file.close();
+  *outCount = (Uint32)size;
+  *outBytecode = (Uint32*)SDL_malloc(size);
+  SDL_ReadIO(stream, *outBytecode, size);
 
-  return buffer;
+  SDL_CloseIO(stream);
+
+  return true;
 }
 
 void CreateInstance();
@@ -387,18 +390,23 @@ void CreateRenderPass() {
 }
 
 void CreatePipeline() {
-  std::vector<char> vertShaderCode = ReadFile("vert.spv");
-  VkShaderModuleCreateInfo createInfo{};
-  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  createInfo.codeSize = vertShaderCode.size();
-  createInfo.pCode = reinterpret_cast<const uint32_t*>(vertShaderCode.data());
+  Uint32* vertShaderCode;
+  Uint32 vertShaderCodeSize;
+  ReadShader("vert.spv", &vertShaderCode, &vertShaderCodeSize);
+  VkShaderModuleCreateInfo createInfo = {
+      .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+      .codeSize = vertShaderCodeSize,
+      .pCode = vertShaderCode,
+  };
   VkShaderModule vertShaderModule;
   vkCreateShaderModule(renderData->device, &createInfo, NULL, &vertShaderModule);
 
-  std::vector<char> fragShaderCode = ReadFile("frag.spv");
+  Uint32* fragShaderCode;
+  Uint32 fragShaderCodeSize;
+  ReadShader("frag.spv", &fragShaderCode, &fragShaderCodeSize);
   createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  createInfo.codeSize = fragShaderCode.size();
-  createInfo.pCode = reinterpret_cast<const uint32_t*>(fragShaderCode.data());
+  createInfo.codeSize = fragShaderCodeSize;
+  createInfo.pCode = fragShaderCode;
   VkShaderModule fragShaderModule;
   vkCreateShaderModule(renderData->device, &createInfo, NULL, &fragShaderModule);
 
@@ -495,6 +503,9 @@ void CreatePipeline() {
 
   vkDestroyShaderModule(renderData->device, fragShaderModule, NULL);
   vkDestroyShaderModule(renderData->device, vertShaderModule, NULL);
+
+  SDL_free(fragShaderCode);
+  SDL_free(vertShaderCode);
 }
 
 void CreateSwapChain() {
@@ -672,43 +683,47 @@ void CleanupSwapChain() {
 }
 
 void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
-  VkCommandBufferBeginInfo beginInfo{};
-  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
+  VkCommandBufferBeginInfo beginInfo = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+  };
   vkBeginCommandBuffer(commandBuffer, &beginInfo);
+  {
+    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    VkRenderPassBeginInfo renderPassInfo = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = renderData->renderPass,
+        .framebuffer = swapChainFramebuffers[imageIndex],
+        .clearValueCount = 1,
+        .pClearValues = &clearColor,
+    };
+    renderPassInfo.renderArea = {
+        .offset = {0, 0},
+        .extent = swapChainExtent,
+    };
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    {
+      vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-  VkRenderPassBeginInfo renderPassInfo{};
-  renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-  renderPassInfo.renderPass = renderData->renderPass;
-  renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
-  renderPassInfo.renderArea.offset = {0, 0};
-  renderPassInfo.renderArea.extent = swapChainExtent;
+      VkViewport viewport = {
+          .x = 0.0f,
+          .y = 0.0f,
+          .width = (float)swapChainExtent.width,
+          .height = (float)swapChainExtent.height,
+          .minDepth = 0.0f,
+          .maxDepth = 1.0f,
+      };
+      vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
-  VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-  renderPassInfo.clearValueCount = 1;
-  renderPassInfo.pClearValues = &clearColor;
+      VkRect2D scissor = {
+          .offset = {0, 0},
+          .extent = swapChainExtent,
+      };
+      vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-  vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-  VkViewport viewport{};
-  viewport.x = 0.0f;
-  viewport.y = 0.0f;
-  viewport.width = (float)swapChainExtent.width;
-  viewport.height = (float)swapChainExtent.height;
-  viewport.minDepth = 0.0f;
-  viewport.maxDepth = 1.0f;
-  vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-
-  VkRect2D scissor{};
-  scissor.offset = {0, 0};
-  scissor.extent = swapChainExtent;
-  vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-  vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-
-  vkCmdEndRenderPass(commandBuffer);
+      vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    }
+    vkCmdEndRenderPass(commandBuffer);
+  }
   vkEndCommandBuffer(commandBuffer);
 }
 
@@ -717,9 +732,9 @@ Renderer::~Renderer() {
 
   CleanupSwapChain();
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    vkDestroySemaphore(renderData->device, renderFinishedSemaphores[i], nullptr);
-    vkDestroySemaphore(renderData->device, imageAvailableSemaphores[i], nullptr);
-    vkDestroyFence(renderData->device, inFlightFences[i], nullptr);
+    vkDestroySemaphore(renderData->device, renderFinishedSemaphores[i], NULL);
+    vkDestroySemaphore(renderData->device, imageAvailableSemaphores[i], NULL);
+    vkDestroyFence(renderData->device, inFlightFences[i], NULL);
   }
   vkDestroyCommandPool(renderData->device, renderData->commandPool, NULL);
 
