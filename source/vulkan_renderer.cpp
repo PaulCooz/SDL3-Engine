@@ -392,7 +392,7 @@ void CreateRenderPass() {
 void CreatePipeline() {
   Uint32* vertShaderCode;
   Uint32 vertShaderCodeSize;
-  ReadShader("vert.spv", &vertShaderCode, &vertShaderCodeSize);
+  ReadShader("resources/vert.spv", &vertShaderCode, &vertShaderCodeSize);
   VkShaderModuleCreateInfo createInfo = {
       .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
       .codeSize = vertShaderCodeSize,
@@ -403,7 +403,7 @@ void CreatePipeline() {
 
   Uint32* fragShaderCode;
   Uint32 fragShaderCodeSize;
-  ReadShader("frag.spv", &fragShaderCode, &fragShaderCodeSize);
+  ReadShader("resources/frag.spv", &fragShaderCode, &fragShaderCodeSize);
   createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   createInfo.codeSize = fragShaderCodeSize;
   createInfo.pCode = fragShaderCode;

@@ -5,14 +5,15 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/SDL/include",
-                "C:/VulkanSDK/1.3.280.0/Include"
+                "C:/VulkanSDK/1.3.280.0/Include",
+                "D:/Windows Kits/10/Include/10.0.22000.0/um"
             ],
             "defines": [
                 "_DEBUG",
                 "UNICODE",
                 "_UNICODE"
             ],
-            "compilerPath": "C:\\Users\\steam\\scoop\\apps\\gcc\\current\\bin\\g++.exe",
+            "compilerPath": "C:/Users/steam/scoop/apps/gcc/current/bin/g++.exe",
             "cStandard": "c17",
             "cppStandard": "gnu++20",
             "intelliSenseMode": "windows-gcc-x64"

@@ -10,7 +10,7 @@ set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE INTERNAL "")
 add_executable(
     sdlrenderer
     source/main.cpp
-    source/renderer.cpp
+    source/vulkan_renderer.cpp
 )
 
 target_compile_features(sdlrenderer PUBLIC cxx_std_20)
@@ -24,5 +24,5 @@ set(SDL_HIDAPI OFF)
 set(SDL_HIDAPI_JOYSTICK OFF)
 set(SDL_HIDAPI_LIBUSB OFF)
 set(SDL_HIDAPI_LIBUSB_SHARED OFF)
-add_subdirectory(SDL EXCLUDE_FROM_ALL)
+add_subdirectory(third_party/SDL EXCLUDE_FROM_ALL)
 target_link_libraries(sdlrenderer SDL3::SDL3)
