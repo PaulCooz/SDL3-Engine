@@ -9,7 +9,7 @@ Renderer* renderer;
 
 int SDL_AppInit(void** appstate, int argc, char** argv) {
   SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-  window = SDL_CreateWindow("SDL+VK window", 800, 600, SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
+  window = SDL_CreateWindow("SDL+DX window", 800, 600, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
   renderer = new Renderer(window);
   SDL_ShowWindow(window);
   return 0;
