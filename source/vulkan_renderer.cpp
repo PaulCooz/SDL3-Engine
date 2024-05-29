@@ -108,6 +108,8 @@ void RecreateSwapChain();
 void CleanupSwapChain();
 void RecordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
+SDL_WindowFlags Renderer::GetRequiredWindowFlags() { return SDL_WINDOW_VULKAN; }
+
 Renderer::Renderer(SDL_Window* window) {
   renderData = (RenderData*)SDL_malloc(sizeof(RenderData));
 

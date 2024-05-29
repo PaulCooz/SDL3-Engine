@@ -4,6 +4,8 @@
 
 class Renderer {
 public:
+  static SDL_WindowFlags GetRequiredWindowFlags();
+
   Renderer(SDL_Window* window);
   int Present();
   ~Renderer();
