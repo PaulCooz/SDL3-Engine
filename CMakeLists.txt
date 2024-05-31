@@ -11,7 +11,8 @@ add_executable(
     sdlrenderer
     source/main.cpp
     # source/vulkan_renderer.cpp
-    source/direct12_renderer.cpp
+    # source/direct12_renderer.cpp
+    source/webgpu_renderer.cpp
 )
 
 target_compile_features(sdlrenderer PUBLIC cxx_std_20)
@@ -23,14 +24,28 @@ target_compile_features(sdlrenderer PUBLIC cxx_std_20)
 
 target_compile_definitions(sdlrenderer PRIVATE "UNICODE" "_UNICODE")
 
-set(D3DX12_PATH "D:/Windows Kits/10")
-include_directories("${D3DX12_PATH}/Include/10.0.22000.0/um")
-include_directories("${D3DX12_PATH}/Include/10.0.22000.0/shared")
-link_directories("${D3DX12_PATH}/Lib/10.0.22000.0/um/x64")
+# set(D3DX12_PATH "D:/Windows Kits/10")
+# include_directories("${D3DX12_PATH}/Include/10.0.22000.0/um")
+# include_directories("${D3DX12_PATH}/Include/10.0.22000.0/shared")
+# link_directories("${D3DX12_PATH}/Lib/10.0.22000.0/um/x64")
 # https://globalcdn.nuget.org/packages/microsoft.direct3d.d3d12.1.613.1.nupkg
-include_directories(sdlrenderer "third_party/D3D12/build/native/include")
-link_directories(sdlrenderer "third_party/D3D12/build/native/bin/x64")
-target_link_libraries(sdlrenderer "d3d12.lib" "dxgi.lib" "d3dcompiler.lib")
+# include_directories(sdlrenderer "third_party/D3D12/build/native/include")
+# link_directories(sdlrenderer "third_party/D3D12/build/native/bin/x64")
+# target_link_libraries(sdlrenderer "d3d12.lib" "dxgi.lib" "d3dcompiler.lib")
+
+if(EMSCRIPTEN)
+    include_directories(sdlrenderer "third_party/webgpu-headers")
+    # Add Emscripten-specific link options
+    target_link_options(sdlrenderer PRIVATE
+        -sUSE_WEBGPU # Handle WebGPU symbols
+        -sASYNCIFY # Required by WebGPU-C++
+    )
+    set_target_properties(sdlrenderer PROPERTIES SUFFIX ".html")
+    # target_link_options(sdlrenderer PRIVATE
+        # [...]
+        # --preload-file "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    # )
+endif()
 
 set(SDL_HIDAPI OFF)
 set(SDL_HIDAPI_JOYSTICK OFF)
