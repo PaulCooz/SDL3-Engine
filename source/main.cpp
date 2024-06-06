@@ -17,8 +17,7 @@ int SDL_AppInit(void** appstate, int argc, char** argv) {
 }
 
 int SDL_AppIterate(void* appstate) {
-  renderer->Present();
-  return 0;
+  return renderer->Present();
 }
 
 int SDL_AppEvent(void* appstate, const SDL_Event* event) {

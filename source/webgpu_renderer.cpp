@@ -1,13 +1,10 @@
 #include "renderer.h"
-#include <cassert>
-#include <iostream>
-#include <vector>
-#include <webgpu/webgpu_cpp.h>
+#include <webgpu.h>
 
-wgpu::Instance instance;
-wgpu::Device device;
-wgpu::SwapChain swapChain;
-wgpu::RenderPipeline pipeline;
+WGPUInstance instance;
+WGPUDevice device;
+WGPUSwapChain swapChain;
+WGPURenderPipeline pipeline;
 bool inited = false;
 
 const char shaderCode[] = R"(
@@ -21,24 +18,23 @@ const char shaderCode[] = R"(
     }
 )";
 
-void GetDevice(void (*callback)(wgpu::Device)) {
-  instance.RequestAdapter(
-      nullptr,
-      [](WGPURequestAdapterStatus status, WGPUAdapter cAdapter, const char* message, void* userdata) {
+void GetDevice(void (*callback)(WGPUDevice)) {
+  wgpuInstanceRequestAdapter(
+      instance, nullptr,
+      [](WGPURequestAdapterStatus status, WGPUAdapter adapter, const char* message, void* userdata) {
         if (status != WGPURequestAdapterStatus_Success) {
-          exit(0);
+          return;
         }
-        wgpu::Adapter adapter = wgpu::Adapter::Acquire(cAdapter);
-        adapter.RequestDevice(
-            nullptr,
-            [](WGPURequestDeviceStatus status, WGPUDevice cDevice, const char* message, void* userdata) {
-              wgpu::Device device = wgpu::Device::Acquire(cDevice);
-              device.SetUncapturedErrorCallback(
+        wgpuAdapterRequestDevice(
+            adapter, nullptr,
+            [](WGPURequestDeviceStatus status, WGPUDevice device, const char* message, void* userdata) {
+              wgpuDeviceSetUncapturedErrorCallback(
+                  device,
                   [](WGPUErrorType type, const char* message, void* userdata) {
-                    std::cout << "Error: " << type << " - message: " << message;
+                    SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Error: %u - message: %s", type, message);
                   },
                   nullptr);
-              reinterpret_cast<void (*)(wgpu::Device)>(userdata)(device);
+              reinterpret_cast<void (*)(WGPUDevice)>(userdata)(device);
             },
             userdata);
       },
@@ -56,34 +52,49 @@ Renderer::Renderer(SDL_Window* window) {
   kWidth = (Uint32)w;
   kHeight = (Uint32)h;
 
-  instance = wgpu::CreateInstance();
-  GetDevice([](wgpu::Device dev) {
+  instance = wgpuCreateInstance(nullptr);
+  GetDevice([](WGPUDevice dev) {
     device = dev;
-    wgpu::SurfaceDescriptorFromCanvasHTMLSelector canvasDesc{};
-    canvasDesc.selector = "#canvas";
 
-    wgpu::SurfaceDescriptor surfaceDesc{.nextInChain = &canvasDesc};
-    wgpu::Surface surface = instance.CreateSurface(&surfaceDesc);
+    WGPUSurfaceDescriptorFromCanvasHTMLSelector canvasDesc{
+        .chain = {.next = nullptr, .sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector},
+        .selector = "#canvas",
+    };
+    WGPUSurfaceDescriptor surfaceDesc{.nextInChain = &canvasDesc.chain};
+    WGPUSurface surface = wgpuInstanceCreateSurface(instance, &surfaceDesc);
 
-    wgpu::SwapChainDescriptor scDesc{
-        .usage = wgpu::TextureUsage::RenderAttachment,
-        .format = wgpu::TextureFormat::BGRA8Unorm,
+    WGPUSwapChainDescriptor scDesc{
+        .nextInChain = nullptr,
+        .usage = WGPUTextureUsage_RenderAttachment,
+        .format = WGPUTextureFormat_BGRA8Unorm,
         .width = kWidth,
         .height = kHeight,
-        .presentMode = wgpu::PresentMode::Fifo};
-    swapChain = device.CreateSwapChain(surface, &scDesc);
-    wgpu::ShaderModuleWGSLDescriptor wgslDesc{};
-    wgslDesc.code = shaderCode;
+        .presentMode = WGPUPresentMode_Fifo};
+    swapChain = wgpuDeviceCreateSwapChain(device, surface, &scDesc);
+    WGPUShaderModuleWGSLDescriptor wgslDesc{
+        .chain = {.next = nullptr, .sType = WGPUSType_ShaderModuleWGSLDescriptor},
+        .code = shaderCode,
+    };
+    WGPUShaderModuleDescriptor shaderModuleDescriptor{.nextInChain = &wgslDesc.chain};
+    WGPUShaderModule shaderModule = wgpuDeviceCreateShaderModule(device, &shaderModuleDescriptor);
 
-    wgpu::ShaderModuleDescriptor shaderModuleDescriptor{.nextInChain = &wgslDesc};
-    wgpu::ShaderModule shaderModule = device.CreateShaderModule(&shaderModuleDescriptor);
-
-    wgpu::ColorTargetState colorTargetState{.format = wgpu::TextureFormat::BGRA8Unorm};
-
-    wgpu::FragmentState fragmentState{.module = shaderModule, .targetCount = 1, .targets = &colorTargetState};
-
-    wgpu::RenderPipelineDescriptor descriptor{.vertex = {.module = shaderModule}, .fragment = &fragmentState};
-    pipeline = device.CreateRenderPipeline(&descriptor);
+    WGPUPipelineLayoutDescriptor plDescr{.bindGroupLayoutCount = 0, .bindGroupLayouts = nullptr};
+    WGPUColorTargetState colorTargetState{.format = WGPUTextureFormat_BGRA8Unorm, .writeMask = WGPUColorWriteMask_All};
+    WGPUFragmentState fragmentState{.module = shaderModule, .targetCount = 1, .targets = &colorTargetState};
+    WGPURenderPipelineDescriptor descriptor{
+        .layout = wgpuDeviceCreatePipelineLayout(device, &plDescr),
+        .vertex = {.module = shaderModule},
+        .primitive =
+            {
+                .topology = WGPUPrimitiveTopology_TriangleList,
+                .stripIndexFormat = WGPUIndexFormat_Undefined,
+                .frontFace = WGPUFrontFace_CCW,
+                .cullMode = WGPUCullMode_None,
+            },
+        .multisample = {.nextInChain = nullptr, .count = 1, .mask = UINT32_MAX, .alphaToCoverageEnabled = false},
+        .fragment = &fragmentState,
+    };
+    pipeline = wgpuDeviceCreateRenderPipeline(device, &descriptor);
 
     inited = true;
   });
@@ -93,18 +104,23 @@ int Renderer::Present() {
   if (!inited)
     return 0;
 
-  wgpu::RenderPassColorAttachment attachment{
-      .view = swapChain.GetCurrentTextureView(), .loadOp = wgpu::LoadOp::Clear, .storeOp = wgpu::StoreOp::Store};
+  WGPURenderPassColorAttachment attachment{
+      .view = wgpuSwapChainGetCurrentTextureView(swapChain),
+      .depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
+      .loadOp = WGPULoadOp_Clear,
+      .storeOp = WGPUStoreOp_Store,
+  };
+  WGPURenderPassDescriptor renderpass{.colorAttachmentCount = 1, .colorAttachments = &attachment};
 
-  wgpu::RenderPassDescriptor renderpass{.colorAttachmentCount = 1, .colorAttachments = &attachment};
+  WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(device, nullptr);
+  WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &renderpass);
+  wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+  wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+  wgpuRenderPassEncoderEnd(pass);
+  WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, nullptr);
+  WGPUQueue queue = wgpuDeviceGetQueue(device);
+  wgpuQueueSubmit(queue, 1, &commands);
 
-  wgpu::CommandEncoder encoder = device.CreateCommandEncoder();
-  wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&renderpass);
-  pass.SetPipeline(pipeline);
-  pass.Draw(3);
-  pass.End();
-  wgpu::CommandBuffer commands = encoder.Finish();
-  device.GetQueue().Submit(1, &commands);
   return 0;
 }
 

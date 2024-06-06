@@ -34,6 +34,44 @@
 				"build"
 			],
 			"group": "build"
-		}
+		},
+		{
+			"type": "shell",
+			"label": "web configure",
+			"command": "emcmake",
+			"args": [
+				"cmake",
+				"-S",
+				".",
+				"-B",
+				"./build",
+				"-DCMAKE_BUILD_TYPE=Debug",
+				"-G",
+				"Ninja"
+			]
+		},
+		{
+			"label": "web build",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"./build"
+			],
+			"dependsOn": [
+				"web configure"
+			],
+			"group": "build"
+		},
+		{
+			"label": "web build and run",
+			"command": "emrun",
+			"args": [
+				"./build/Debug/sdlrenderer.html"
+			],
+			"dependsOn": [
+				"build"
+			],
+			"group": "build"
+		},
 	]
 }

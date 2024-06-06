@@ -34,7 +34,9 @@ target_compile_definitions(sdlrenderer PRIVATE "UNICODE" "_UNICODE")
 # target_link_libraries(sdlrenderer "d3d12.lib" "dxgi.lib" "d3dcompiler.lib")
 
 if(EMSCRIPTEN)
-    include_directories(sdlrenderer "third_party/webgpu-headers")
+    # TODO set as folder agnostic
+    include_directories(sdlrenderer "C:/Users/steam/scoop/apps/emscripten/3.1.61/upstream/emscripten/system/include/webgpu")
+
     # Add Emscripten-specific link options
     target_link_options(sdlrenderer PRIVATE
         -sUSE_WEBGPU # Handle WebGPU symbols
